@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'PetDotNyanko_Android_Project.zip'
+      - '**.zip'
       - '.github/workflows/build-apk.yml'
 
 jobs:
@@ -23,9 +23,6 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # GitHub's Ubuntu runner already includes Android command-line tools.
-      # Avoid setup-android here: its legacy "tools" package request caused
-      # the sdkmanager failure seen in the previous run.
       - name: Install Android SDK components
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
@@ -39,18 +36,38 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Extract Android project
+      - name: Find and extract Android project
         run: |
-          unzip -q PetDotNyanko_Android_Project.zip -d extracted
-          test -f extracted/PetDotNyanko_Android_Project/app/build.gradle
+          ZIP_FILE=$(find . -maxdepth 4 -type f -iname 'PetDotNyanko*.zip' -print -quit)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "No PetDotNyanko ZIP found in the repository."
+            echo "Upload the Android project ZIP to the repository root, or rename it to PetDotNyanko_Android_Project.zip."
+            echo "Files found in repository:"
+            find . -maxdepth 3 -type f | head -100
+            exit 1
+          fi
+          echo "Using project archive: $ZIP_FILE"
+          mkdir -p extracted
+          unzip -q "$ZIP_FILE" -d extracted
+          PROJECT_DIR=$(find extracted -type f -path '*/app/build.gradle' -print -quit | sed 's#/app/build.gradle##')
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ZIP was extracted, but no Android app/build.gradle was found."
+            find extracted -maxdepth 5 -type f | head -100
+            exit 1
+          fi
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Found Android project at: $PROJECT_DIR"
 
       - name: Build debug APK
-        working-directory: extracted/PetDotNyanko_Android_Project
-        run: gradle --no-daemon assembleDebug
+        run: |
+          cd "$PROJECT_DIR"
+          gradle --no-daemon assembleDebug
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/output/app-debug.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Pet-Dot-Nyanko-Android-APK
-          path: extracted/PetDotNyanko_Android_Project/app/build/outputs/apk/debug/app-debug.apk
+          path: output/app-debug.apk
           if-no-files-found: error
